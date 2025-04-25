@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  email         String         @unique
+  username      String
+  password      String
+  role          Role           @default(USER)
+  tokens        Token[]
+  fichas        Int            @default(0)
+  duelosCreados Versus[]       @relation("DuelosCreados")
+  duelosAceptados Versus[]     @relation("DuelosAceptados")
+  fichaRequests FichaRequest[] // ← Este es el campo que faltaba para la relación inversa
+  createdAt     DateTime       @default(now())
+}
+
+model Token {
+  id        Int      @id @default(autoincrement())
+  token     String
+  userId    Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Versus {
+  id             Int      @id @default(autoincrement())
+  juego          String
+  cantidadFichas Int
+  creadorId      Int
+  oponenteId     Int?     // se setea cuando alguien acepta
+  estado         String   @default("pendiente") // pendiente, en_juego, finalizado, apelado, retenido
+  ganadorId      Int?
+  creador        User     @relation("DuelosCreados", fields: [creadorId], references: [id])
+  oponente       User?    @relation("DuelosAceptados", fields: [oponenteId], references: [id])
+  creadoEn       DateTime @default(now())
+  actualizadoEn  DateTime @updatedAt
+  resultadoCreador    String?  // "gané", "perdí", "apelación"
+  resultadoOponente   String?
+  resultadoConfirmado Boolean  @default(false)
+  enApelacion         Boolean  @default(false)
+}
+
+model FichaRequest {
+  id        Int      @id @default(autoincrement())
+  tipo      String   // "carga" o "retiro"
+  cantidad  Int
+  estado    String   @default("pendiente") // pendiente, aprobado, rechazado
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+enum Role {
+  USER
+  ADMIN
+}
