@@ -7,6 +7,12 @@ export const solicitarFichas = async (req: Request, res: Response) => {
   const userId = (req as any).user.id;
   const { tipo, cantidad } = req.body;
 
+
+  if (userId?.bloqueado) {
+    return res.status(403).json({ error: "Tu cuenta está bloqueada. No podés solicitar fichas." });
+  }
+
+
   if (!["carga", "retiro"].includes(tipo)) {
     return res.status(400).json({ error: "Tipo inválido" });
   }

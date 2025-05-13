@@ -6,6 +6,15 @@ export const crearDuelo = async (req: Request, res: Response) => {
   const { juego, cantidadFichas } = req.body;
   const userId = (req as any).user.id;
 
+  if (userId?.bloqueado) {
+  return res.status(403).json({ error: "Tu cuenta está bloqueada." });
+  }
+
+  if (userId?.nicknameLOL && await prisma.nicknameBloqueado.findUnique({ where: { nickname: userId.nicknameLOL } })) {
+    return res.status(403).json({ error: "Tu nickname está bloqueado. No podés participar en duelos." });
+  }
+
+
   // Validación básica
   if (!juego || typeof cantidadFichas !== "number" || isNaN(cantidadFichas) || cantidadFichas <= 0) {
     return res.status(400).json({ error: "Datos inválidos. Revisá el juego y la cantidad de fichas." });
@@ -51,6 +60,14 @@ export const aceptarDuelo = async (req: Request, res: Response) => {
   const { dueloId } = req.body;
   const userId = (req as any).user.id;
 
+  if (userId?.bloqueado) {
+  return res.status(403).json({ error: "Tu cuenta está bloqueada." });
+  }
+
+  if (userId?.nicknameLOL && await prisma.nicknameBloqueado.findUnique({ where: { nickname: userId.nicknameLOL } })) {
+    return res.status(403).json({ error: "Tu nickname está bloqueado. No podés participar en duelos." });
+  }
+
   const duelo = await prisma.versus.findUnique({ where: { id: dueloId } });
   if (!duelo || duelo.oponenteId) {
     return res.status(404).json({ error: "Duelo no disponible" });
@@ -92,16 +109,58 @@ export const aceptarDuelo = async (req: Request, res: Response) => {
 };
 
 // Listar duelos pendientes (sin oponente aún)
-export const listarPendientes = async (_: Request, res: Response) => {
-  const duelos = await prisma.versus.findMany({
-    where: { estado: "pendiente" },
-    include: {
-      creador: { select: { username: true } }
-    },
-  });
+// URL que consulta el usuario | Resultado
+// /duelos/pendientes?page=1 | Los primeros 15 duelos más viejos
+// /duelos/pendientes?page=2 | Los siguientes 15 duelos
+// /duelos/pendientes?page=3 | Los siguientes 15 duelos
+// (etc.) | 
 
-  return res.json(duelos);
+// Lo que devueve:
+// {
+//   "page": 1,
+//   "pageSize": 15,
+//   "totalDuelos": 125,
+//   "totalPages": 9,
+//   "duelos": [
+//     // los 15 duelos de la página 1
+//   ]
+// }
+export const listarPendientes = async (req: Request, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = 15;
+
+    // Primero contar cuántos duelos hay en total
+    const totalDuelos = await prisma.versus.count({
+      where: { estado: "pendiente" }
+    });
+
+    // Después traer la página que nos pidieron
+    const duelos = await prisma.versus.findMany({
+      where: { estado: "pendiente" },
+      include: {
+        creador: { select: { username: true } }
+      },
+      orderBy: {
+        creadoEn: "asc",
+      },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+
+    return res.json({
+      page,
+      pageSize,
+      totalDuelos,
+      totalPages: Math.ceil(totalDuelos / pageSize),
+      duelos,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Error al listar los duelos pendientes" });
+  }
 };
+
+
 
 export const declararResultado = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
@@ -183,39 +242,98 @@ async function pagarGanador(userId: number, cantidad: number, dueloId: number) {
     });
 }
 
+// URL	Qué devuelve
+// /historial?page=1	Todas las partidas del usuario
+// /historial?page=2&filter=ganadas	Solo las partidas ganadas, página 2
+// /historial?page=1&filter=perdidas	Solo las partidas perdidas, página 1
+// /historial?page=1&filter=otras	Ignora el filtro (devuelve todas)
 export const historialUsuario = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
-  
-    const historial = await prisma.versus.findMany({
-      where: {
-        estado: { not: "pendiente" },
+  const userId = (req as any).user.id;
+
+  let page = parseInt(req.query.page as string);
+  const filter = (req.query.filter as string)?.toLowerCase(); // 'ganadas', 'perdidas' o undefined
+  const pageSize = 15;
+
+  if (isNaN(page) || page < 1) {
+    page = 1;
+  }
+
+  // Armamos el filtro dinámicamente
+  const whereClause: any = {
+    estado: { not: "pendiente" },
+    OR: [
+      { creadorId: userId },
+      { oponenteId: userId }
+    ]
+  };
+
+  if (filter === "ganadas") {
+    whereClause.ganadorId = userId;
+  } else if (filter === "perdidas") {
+    whereClause.AND = [
+      {
+        ganadorId: { not: userId }, // El ganador NO fue el usuario
+      },
+      {
         OR: [
           { creadorId: userId },
           { oponenteId: userId }
         ]
-      },
+      }
+    ];
+  }
+
+  try {
+    const total = await prisma.versus.count({ where: whereClause });
+
+    const historial = await prisma.versus.findMany({
+      where: whereClause,
       orderBy: { creadoEn: "desc" },
       include: {
         creador: { select: { username: true } },
         oponente: { select: { username: true } }
-      }
+      },
+      skip: (page - 1) * pageSize,
+      take: pageSize
     });
-  
-    res.json(historial);
-  };
+
+    const totalPages = Math.ceil(total / pageSize);
+
+    res.json({
+      historial,
+      totalPages,
+      currentPage: page
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error al obtener el historial" });
+  }
+};
+
+
+
   
 // Listar duelos en apelación (retenidos)
 export const listarDuelosEnApelacion = async (_: Request, res: Response) => {
-  const duelosEnApelacion = await prisma.versus.findMany({
-    where: { estado: "retenido" },
-    include: {
-      creador: { select: { username: true } },
-      oponente: { select: { username: true } }
-    },
-  });
+  try {
+    const duelosEnApelacion = await prisma.versus.findMany({
+      where: { estado: "retenido" },
+      include: {
+        creador: { select: { username: true } },
+        oponente: { select: { username: true } }
+      },
+      orderBy: {
+        creadoEn: "desc",
+      },
+      take: 100, // 🔥 limitar a 100 duelos
+    });
 
-  return res.json(duelosEnApelacion);
+    return res.json(duelosEnApelacion);
+  } catch (error) {
+    return res.status(500).json({ error: "Error al listar los duelos en apelación" });
+  }
 };
+
 
 
 // Decidir el ganador de un duelo en apelación
@@ -248,6 +366,7 @@ export const decidirGanador = async (req: Request, res: Response) => {
       estado: "finalizado",  // El duelo ya terminó
       resultadoConfirmado: true,  // Confirmar el resultado
       enApelacion: false,  // Marcar como no en apelación
+      resueltoConApelacion: true 
     },
   });
 
@@ -260,3 +379,47 @@ export const decidirGanador = async (req: Request, res: Response) => {
 
   return res.json({ message: "El ganador ha sido decidido y el duelo finalizado.", duelo: updatedDuelo });
 };
+
+
+export const apelarDuelo = async (req: Request, res: Response) => {
+  const dueloId = parseInt(req.params.id);
+  const userId = (req as any).user.id;
+
+  if (isNaN(dueloId)) {
+    return res.status(400).json({ error: "ID de duelo inválido." });
+  }
+
+  const duelo = await prisma.versus.findUnique({ where: { id: dueloId } });
+
+  if (!duelo) {
+    return res.status(404).json({ error: "Duelo no encontrado." });
+  }
+
+  if (!duelo.oponenteId) {
+    return res.status(400).json({ error: "El duelo aún no tiene oponente asignado." });
+  }
+
+  if (duelo.estado !== "pendiente") {
+    return res.status(400).json({ error: "El duelo ya no está en estado pendiente." });
+  }
+
+  if (![duelo.creadorId, duelo.oponenteId].includes(userId)) {
+    return res.status(403).json({ error: "No tenés permiso para apelar este duelo." });
+  }
+
+  const esCreador = userId === duelo.creadorId;
+  const dataUpdate: any = {
+    enApelacion: true,
+    estado: "retenido",
+    ...(esCreador ? { resultadoCreador: "apelación" } : { resultadoOponente: "apelación" }),
+  };
+
+  const dueloActualizado = await prisma.versus.update({
+    where: { id: dueloId },
+    data: dataUpdate,
+  });
+
+  return res.json({ msg: "El duelo fue puesto en apelación", duelo: dueloActualizado });
+};
+
+

@@ -10,7 +10,7 @@ datasource db {
 model User {
   id            Int            @id @default(autoincrement())
   email         String         @unique
-  username      String
+  username      String         
   password      String
   role          Role           @default(USER)
   tokens        Token[]
@@ -18,7 +18,12 @@ model User {
   duelosCreados Versus[]       @relation("DuelosCreados")
   duelosAceptados Versus[]     @relation("DuelosAceptados")
   fichaRequests FichaRequest[] // ← Este es el campo que faltaba para la relación inversa
+  nicknameLOL   String? // editable solo una vez
+  nicknameEditadoLOL Boolean @default(false)
+  emailVerificado   Boolean @default(false)
+  estaBloqueado Boolean @default(false) // 👈 nuevo campo
   createdAt     DateTime       @default(now())
+  emailVerified  Boolean  @default(false)
 }
 
 model Token {
@@ -45,6 +50,8 @@ model Versus {
   resultadoOponente   String?
   resultadoConfirmado Boolean  @default(false)
   enApelacion         Boolean  @default(false)
+  resueltoConApelacion Boolean @default(false)
+  
 }
 
 model FichaRequest {
@@ -57,6 +64,13 @@ model FichaRequest {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model NicknameBloqueado {
+  id       Int    @id @default(autoincrement())
+  juego    String
+  nickname String @unique
+}
+
 
 
 enum Role {
